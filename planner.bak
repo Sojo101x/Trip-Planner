@@ -1,0 +1,525 @@
+#lang dssl2
+
+# Final project: Trip Planner
+
+import cons
+import sbox_hash
+import 'project-lib/dictionaries.rkt'
+import 'project-lib/graph.rkt'
+import 'project-lib/binheap.rkt'
+
+### Basic Types ###
+
+#  - Latitudes and longitudes are numbers:
+let Lat?  = num?
+let Lon?  = num?
+
+#  - Point-of-interest categories and names are strings:
+let Cat?  = str?
+let Name? = str?
+
+### Raw Item Types ###
+
+#  - Raw positions are 2-element vectors with a latitude and a longitude
+let RawPos? = TupC[Lat?, Lon?]
+
+#  - Raw road segments are 4-element vectors with the latitude and
+#    longitude of their first endpoint, then the latitude and longitude
+#    of their second endpoint
+let RawSeg? = TupC[Lat?, Lon?, Lat?, Lon?]
+
+#  - Raw points-of-interest are 4-element vectors with a latitude, a
+#    longitude, a point-of-interest category, and a name
+let RawPOI? = TupC[Lat?, Lon?, Cat?, Name?]
+
+### Contract Helpers ###
+
+# ListC[T] is a list of `T`s (linear time):
+let ListC = Cons.ListC
+# List of unspecified element type (constant time):
+let List? = Cons.list?
+
+interface TRIP_PLANNER:
+
+    # Returns the positions of all the points-of-interest that belong to
+    # the given category.
+    def locate_all(
+            self,
+            dst_cat:  Cat?           # point-of-interest category
+        )   ->        ListC[RawPos?] # positions of the POIs
+
+    # Returns the route, if any, from the given source position
+    # to the point-of-interest with the given name.
+    def plan_route(
+            self,
+            src_lat:  Lat?,          # starting latitude
+            src_lon:  Lon?,          # starting longitude
+            dst_name: Name?          # name of goal
+        )   ->        ListC[RawPos?] # path to goal
+
+    # Finds no more than `n` points-of-interest of the given category
+    # nearest to the source position.
+    def find_nearby(
+            self,
+            src_lat:  Lat?,          # starting latitude
+            src_lon:  Lon?,          # starting longitude
+            dst_cat:  Cat?,          # point-of-interest category
+            n:        nat?           # maximum number of results
+        )   ->        ListC[RawPOI?] # list of nearby POIs
+
+let eight_principles = ["Know your rights.",
+ "Acknowledge your sources.",
+ "Protect your work.",
+ "Avoid suspicion.",
+ "Do your own work.",
+ "Never falsify a record or permit another person to do so.",
+ "Never fabricate data, citations, or experimental results.",
+ "Always tell the truth when discussing your work with your instructor."]
+ 
+ 
+struct position:
+    let lat
+    let lon
+    
+struct POI:
+    let name
+    let position
+ 
+        
+def distance_calculate(x,y):
+        let x1 = x.lat
+        let y1 = x.lon
+        let x2 = y.lat
+        let y2 = y.lon
+        (((x2 - x1) * (x2 - x1)) + ((y2 - y1) * (y2 - y1))).sqrt()
+        
+
+struct elements:
+    let vertex
+    let distance
+    let name
+            
+class TripPlanner (TRIP_PLANNER):
+    #unique pos
+    let categories_to_pos
+    let cat_to_poi
+    let name_to_pos
+    
+    let pos_to_ver
+    let ver_to_pos
+    let graph
+    let hash_size
+
+        
+    def __init__(self, paths, pois):
+        
+        self.hash_size = pois.len()
+        self.categories_to_pos = HashTable(self.hash_size, make_sbox_hash())
+        self.name_to_pos = HashTable(self.hash_size, make_sbox_hash())
+        self.cat_to_poi = HashTable(self.hash_size, make_sbox_hash())
+       
+       
+        ##Graph dicts
+        self.pos_to_ver = AssociationList()
+        self.ver_to_pos = AssociationList()
+       
+        
+        
+        #Populates position/vertex dictionaries
+        let index = 0
+        for coords in paths:
+            
+            let p = position(coords[0], coords[1])
+            let o = position(coords[2], coords[3])
+            
+            if (self.pos_to_ver.mem?(p) == False):
+                self.pos_to_ver.put(p, index)
+                self.ver_to_pos.put(index, p)
+                index = index + 1
+            
+            if (self.pos_to_ver.mem?(o) == False):
+                self.pos_to_ver.put(o, index)
+                self.ver_to_pos.put(index, o)
+                index = index + 1
+            
+            if (self.pos_to_ver.mem?(p) == True):
+                continue
+            if (self.pos_to_ver.mem?(o) == True):
+                continue
+         
+        
+        ## After Coords are done
+        let graph_size = self.pos_to_ver.len()
+        self.graph = WuGraph(graph_size)
+        
+        ## Populates graph
+        for coords in paths:
+             self.graph.set_edge(self.pos_to_ver.get(position(coords[0], coords[1])),
+                                                     self.pos_to_ver.get(position(coords[2], coords[3])),\
+                                                     distance_calculate(position(coords[0], coords[1]), position(coords[2], coords[3])))
+        
+        for poi_info in pois:
+            # Stores pos for POI
+          
+            let pos_find = position(poi_info[0], poi_info[1])
+          
+            
+            # Stores poi name
+            let poi_name = poi_info[3]
+            
+            # Stores poi category
+            let poi_cat = poi_info[2]
+            
+            let new_poi = POI(poi_name, pos_find)
+            
+            # If category is new to category_to_pos, store it
+            if self.categories_to_pos.mem?(poi_cat) == False:
+                let first_con = None
+                first_con = cons(pos_find, first_con)
+                self.categories_to_pos.put(poi_cat, first_con)
+                
+            # If category is in category_to_pos
+            # All unique
+            if self.categories_to_pos.mem?(poi_cat) == True:
+                
+                let cons_list = self.categories_to_pos.get(poi_cat)
+                
+                let repeat = False
+                
+                while (cons_list.next != None):
+                 
+                    if (cons_list.data == pos_find):
+                        repeat = True
+                    cons_list = cons_list.next
+                
+                if (repeat == False):
+                    let continued_con = self.categories_to_pos.get(poi_cat)
+                    continued_con = cons(pos_find, continued_con)
+                    self.categories_to_pos.put(poi_cat, continued_con)
+                if (repeat == True):
+                    pass
+                    
+            
+            # If category is new to cat_to_poi    
+            if self.cat_to_poi.mem?(poi_cat) == False:
+                let first_con = None
+                first_con = cons(new_poi, first_con)
+                self.cat_to_poi.put(poi_cat, first_con)
+                
+            # If category is in cat_to_poi    
+            if self.cat_to_poi.mem?(poi_cat) == True:
+                let continued_con = self.cat_to_poi.get(poi_cat)
+                continued_con = cons(new_poi, continued_con)
+                self.cat_to_poi.put(poi_cat, continued_con)
+                
+            # If name is new to name_to_pos    
+            self.name_to_pos.put(poi_name, pos_find)
+            
+    def dijkstra(self, graph, start_pos):
+        #vert-num to distance vec (index: vert, value : distance)
+            let ver_to_dis = AssociationList()
+        # vert to preds (index: vert, value: pred)
+            let ver_to_preds = AssociationList()
+    
+        #initialize binheap length of pos_to_ver list
+    
+            for v in range(graph.len()):
+                ver_to_dis.put(v,inf)
+                ver_to_preds.put(v, None)
+                
+            let todo = BinHeap(graph.len() * 2, λ x, y: ver_to_dis.get(x) < ver_to_dis.get(y) )
+            let done = [False; graph.len()]
+            todo.insert(self.pos_to_ver.get(start_pos))
+            ver_to_dis.put(self.pos_to_ver.get(start_pos), 0)
+    
+            while todo.len() != 0:
+            
+                let curr = todo.find_min()
+                todo.remove_min()
+        
+                if done[curr] == False:
+                   done[curr] = True
+                   let stored = self.graph.get_adjacent(curr)
+                   stored = Cons.to_vec(stored)
+                   for i in stored:
+                       if (ver_to_dis.get(curr) + graph.get_edge(curr, i) < ver_to_dis.get(i)):
+                           ver_to_dis.put(i, ver_to_dis.get(curr) + graph.get_edge(curr, i))
+                           ver_to_preds.put(i, curr)
+                           todo.insert(i)
+        
+            let result = vec(2)
+            result[0] = ver_to_dis
+            result[1] = ver_to_preds
+            return result
+            
+    def locate_all(self, dst_cat):
+        ## if dst_cat is a mem of self's hashtable then hashtable.get(dst_cat)
+        if (self.categories_to_pos.mem?(dst_cat) == True):
+            let result = None
+            
+            let cat_dict = self.categories_to_pos.get(dst_cat)
+            while (cat_dict.next != None):
+                result = cons([cat_dict.data.lat, cat_dict.data.lon], result)
+                cat_dict = cat_dict.next
+            return result
+            
+        if (self.categories_to_pos.mem?(dst_cat) == False):
+            return None
+            
+        
+    def plan_route(self, src_lat, src_lon, dst_name):
+        #starting position
+        let start_pos = position(src_lat, src_lon)
+        
+        #converts name to related position struct
+        #destination position
+       
+        if (self.name_to_pos.mem?(dst_name) == False):
+            return None
+            
+        let end_pos = self.name_to_pos.get(dst_name)
+
+        
+        let dijkstra_results = self.dijkstra(self.graph, start_pos)
+        let dist = dijkstra_results[0]
+        let preds = dijkstra_results[1]
+   
+        
+        let list = None
+    
+        let curr = self.pos_to_ver.get(end_pos)
+             
+        while curr != None:
+            
+            let first_curr = self.ver_to_pos.get(curr)
+            let curr_add = [first_curr.lat, first_curr.lon]
+            
+            list = cons(curr_add, list)
+            
+            #if curr = start
+            if curr == self.pos_to_ver.get(start_pos):
+                return list
+            
+            curr = preds.get(curr)
+        
+            
+        return None
+        
+       
+    def find_nearby(self, src_lat, src_lon, dst_cat, n):
+  
+        
+        #struct elements:
+         #   let vertex
+          #  let distance
+           # let name
+        
+        # ^ helps later for BinHeap arguments
+        
+        #cons list
+        let ls = None
+        #binheap to sort nearby
+        let binny = BinHeap(self.hash_size,λ x, y: x.distance < y.distance)
+        
+
+        if (self.cat_to_poi.mem?(dst_cat) == True):
+            ##Dijkstra results from given starting pos & graph
+            let di_results = self.dijkstra(self.graph, position(src_lat, src_lon))
+            ##stores vertex:distance association list from dijkstras
+            let votd = di_results[0]
+            ## gets value from cat_to_poi separate chaining hashtable.
+            
+            let list = self.cat_to_poi.get(dst_cat)
+            
+            #struct POI:
+             #   let name
+              #  let position
+            # ^ poi reminder
+            
+            while list.next != None:
+               # println("IM RUNNING")
+                #takes position, passes through pos_to_ver dict, passes to ver_to_dist dict
+                # if pos dis != inf aka reachable
+                if (votd.get(self.pos_to_ver.get((list.data.position))) != inf):
+                    let v = self.pos_to_ver.get(list.data.position)
+                    
+                    #store the vertex, distance, and name
+                    let bunch = elements(v,votd.get(v),list.data.name)
+                   
+                    binny.insert(bunch)
+                   
+                list = list.next
+                
+            
+            #binny is popualted now, 
+            for i in range(n):
+
+                ##add the element w highest priority
+                if (binny.len() == 0):
+                    return ls
+                let add = binny.find_min()
+                let pos = self.ver_to_pos.get(add.vertex)
+                let store = [pos.lat,pos.lon,dst_cat,add.name]
+                
+                ls = cons(store,ls)
+               
+                binny.remove_min()
+                      
+        return ls
+            
+
+def my_first_example():
+        return TripPlanner([[0,0, 0,1], [0,0, 1,0]],
+                           [[0,0, "bar", "The Empty Bottle"],
+                            [0,1, "food", "Pierogi"]])
+                            
+                            
+def my_second_example(): # Featuring disconnected path
+    return TripPlanner([[0,0, 0,1], [0,0,1,0], [0,1, 1, 0], [2,0, 2,1]],
+                        [[1, 0, "clothes", "Kohls"], 
+                        [2, 1, "park", "Lemon Lake"],
+                        [2, 1, "food", "Lemon Lake Cakes"],
+                        [1, 0, "food", "Kohls Food Court"],
+                        [1, 0, "barber", "Kohls Kuts"]])
+
+def my_third_example(): # Heavily Populated POI
+    return TripPlanner([[0,0, 0,1], [0,0,1,0], [1,0, 1,1,], [1,1,1,2]],
+                        [[0,0, "clothes", "JCPennys"], [0,0, "clothes", "Hot Topic"],
+                        [0,0, "clothes", "Zara"], [0,0, "clothes", "Boohoo Man"],
+                        [0,0, "clothes", "Ross"], [1, 0, "food", "Food Court"],
+                        [1,1, "food", "Panda Express"], [1,1, "food", "Taco Bell"],
+                        [1,2, "food", "Soubon"], [1,1, "clothes", "Wildcat Closet"]])
+                        
+def my_fourth_example(): # no poi
+    return TripPlanner([[0, 0, 1, 0]],[])
+    
+def my_fifth_example(): # one poi
+    return TripPlanner(
+      [[0, 0, 1, 0]],
+      [[1, 0, 'bank', 'Union']])
+    
+test 'My first locate_all tests':
+    assert my_first_example().locate_all("food") == \
+        cons([0,1], None)
+    #Test for Absent Category
+    assert my_first_example().locate_all("notacategory") == \
+        None
+    #Other POI Test
+    assert my_first_example().locate_all("bar") == \
+        cons([0,0], None)
+    
+test 'My second locate_all test':
+    ## POI at different positions
+    assert my_second_example().locate_all("food") == \
+        cons([2,1], cons([1,0], None))
+    ## POIs at same position
+    assert my_second_example().locate_all("clothes") == \
+        cons([1, 0], None)
+    assert my_second_example().locate_all("barber") == \
+        cons([1, 0], None)
+    ##Another Absent Test because why not
+    assert my_second_example().locate_all("nothere") == \
+        None
+
+test 'My third locate all test':
+    ##overpopulated POIS
+    assert my_third_example().locate_all("clothes") == \
+        cons([0,0], cons([1,1], None))
+    assert my_third_example().locate_all("food") == \
+        cons([1,0], cons([1,1], cons([1,2], None)))   
+    
+test 'My fourth locate_all test':
+    ##no pois
+    assert my_fourth_example().locate_all("not here") == \
+        None
+test 'My fifth locate_all test':
+    assert my_fifth_example().locate_all("food") == \ 
+        None
+        
+    
+
+test 'My first plan_route test':
+    assert my_first_example().plan_route(0, 0, "Pierogi") == \
+       cons([0,0], cons([0,1], None))
+    assert my_first_example().plan_route(0,1, "Pierogi") == \
+       cons([0,1], None)
+   
+       
+test 'My second plan_route test':
+    assert my_second_example().plan_route(2,1, "Kohls") == \
+        None            
+    assert my_second_example().plan_route(2,1, "Lemon Lake") == \
+        cons([2,1], None)
+    assert my_second_example().plan_route(0,0, "Lemon Lake Desserts") == \
+        None
+    assert my_second_example().plan_route(2,0, "Lemon Lake") == \
+        cons([2,0], cons([2,1], None))
+        
+        
+test 'My third plan_route test':
+    assert my_third_example().plan_route(0,1,"JCPennys") == \
+        cons([0,1], cons([0,0], None))
+    assert my_third_example().plan_route(0,1,"Ross") == \
+        cons([0,1], cons([0,0], None))
+    assert my_third_example().plan_route(0,1, "Hot Topic") == \
+        cons([0,1], cons([0,0], None))
+    assert my_third_example().plan_route(0,0, "Soubon") == \
+        cons([0,0], cons([1,0], cons([1,1], cons([1,2], None))))
+    assert my_third_example().plan_route(0,1, "Soubon") == \
+        cons([0,1], cons([0,0], cons([1,0], cons([1,1], cons([1,2], None))))) 
+    assert my_third_example().plan_route(4,2, "I dont exist") == \
+        None
+        
+test 'My fourth plan_route test':
+    assert my_fourth_example().plan_route(0,0, "I dont exist") == \
+        None
+                                                                                                    
+
+test 'My first find_nearby test':
+    assert my_first_example().find_nearby(0, 0, "food", 1) == \
+       cons([0,1, "food", "Pierogi"], None)
+    assert my_first_example().find_nearby(0, 1, "food", 3) == \
+       cons([0,1, "food", "Pierogi"], None)
+    assert my_first_example().find_nearby(0,0, "bar", 10) == \
+       cons([0,0, "bar", "The Empty Bottle"], None)
+       
+test 'My second find_nearby test':
+    assert my_second_example().find_nearby(0,1,"barber", 4) == \
+        cons([1,0,"barber", "Kohls Kuts"],None)
+    assert my_second_example().find_nearby(2,0,"park", 2) == \
+        cons([2,1,"park", "Lemon Lake"], None)
+    assert my_second_example().find_nearby(2,1, "park", 1) == \
+        cons([2,1,"park", "Lemon Lake"], None)
+    assert my_second_example().find_nearby(2,0,"clothes", 1) == \
+        None
+    assert my_second_example().find_nearby(0,0, "park", 1) == \
+        None
+    assert my_second_example().find_nearby(0,0, "food", 2) == \
+        cons([1,0,"food","Kohls Food Court"], None)
+    assert my_second_example().find_nearby(2,0, "food",2) == \
+        cons([2,1,"food","Lemon Lake Cakes"], None)
+
+test 'My third find_nearby test':
+    assert my_third_example().find_nearby(0,1, "clothes", 1) == \
+        cons([0,0,"clothes", "Ross"],None)
+    assert my_third_example().find_nearby(0,1,"clothes", 2) == \
+        cons([0,0,"clothes", "JCPennys"], cons([0,0,"clothes","Ross"],None))
+    assert my_third_example().find_nearby(0,1,"clothes", 3) == \
+        cons([0,0,"clothes", "Hot Topic"], cons([0,0,"clothes", "JCPennys"],\
+        cons([0,0, "clothes", "Ross"], None)))
+    assert my_third_example().find_nearby(0,1,"clothes",4) == \
+        cons([0,0,"clothes","Zara"], cons([0,0,"clothes", "Hot Topic"], cons([0,0,"clothes", "JCPennys"],\
+        cons([0,0, "clothes", "Ross"], None))))
+    assert my_third_example().find_nearby(0,1, "clothes", 5) == \ 
+        cons([0,0, "clothes", "Boohoo Man"], cons([0,0,"clothes","Zara"], cons([0,0,"clothes", "Hot Topic"], \
+        cons([0,0,"clothes", "JCPennys"],\
+        cons([0,0, "clothes", "Ross"], None)))))
+    assert my_third_example().find_nearby(0,1, "clothes", 6) == \
+        cons([1,1,"clothes","Wildcat Closet"], cons([0,0, "clothes", "Boohoo Man"], cons([0,0,"clothes","Zara"], cons([0,0,"clothes", "Hot Topic"], \
+        cons([0,0,"clothes", "JCPennys"],\
+        cons([0,0, "clothes", "Ross"], None))))))
+    assert my_third_example().find_nearby(0,1, "clothes", 10) == \
+    cons([1,1,"clothes","Wildcat Closet"], cons([0,0, "clothes", "Boohoo Man"], cons([0,0,"clothes","Zara"], cons([0,0,"clothes", "Hot Topic"], \
+        cons([0,0,"clothes", "JCPennys"],\
+        cons([0,0, "clothes", "Ross"], None))))))
+ 

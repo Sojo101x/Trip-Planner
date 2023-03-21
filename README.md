@@ -3,9 +3,8 @@ Trip Planning API Project for Data Structures and Algorithms
 
 Features --
 Trip Planner offers the following features:
-#Routing: Users can enter their starting and destination points, and the program will generate the optimal route based on distance.
-
-#Search: Users can search for nearby attractions allowing them to plan their trips in detail.
+Routing: Users can enter their starting and destination points, and the program will generate the optimal route based on distance.
+Search: Users can search for nearby attractions allowing them to plan their trips in detail.
 
 Functions --
 Locate-all: Users can find the positions of all points-of-interest in a given category.
